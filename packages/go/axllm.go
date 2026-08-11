@@ -12444,6 +12444,14 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	var v_is_grok Value
 	var v_is_mistral Value
 	var v_model_config Value
+	var v_bp_model Value
+	var v_bp_dola Value
+	var v_bp_dsflash Value
+	var v_bp_messages Value
+	var v_bp_msg Value
+	var v_bp_first_role Value
+	var v_bp_orig_content Value
+	var v_bp_new_content Value
 	if len(args) > 0 { v_profile = args[0] }
 	_ = v_profile
 	if len(args) > 1 { v_payload = args[1] }
@@ -12455,6 +12463,14 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	_ = v_is_grok
 	_ = v_is_mistral
 	_ = v_model_config
+	_ = v_bp_model
+	_ = v_bp_dola
+	_ = v_bp_dsflash
+	_ = v_bp_messages
+	_ = v_bp_msg
+	_ = v_bp_first_role
+	_ = v_bp_orig_content
+	_ = v_bp_new_content
 	v_empty_map = Object()
 	v_model_config = coreGet(v_request, "model_config", v_empty_map)
 	v_is_deepseek = _core_eq(v_profile, "deepseek")
@@ -12474,6 +12490,32 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 		{ v, err := _provider_apply_grok_chat_quirks(v_payload, v_request, v_model_config); if err != nil { return nil, err }; v_payload = v }
 	} else {
 	// empty
+	}
+	// BytePlus per-model configuration.
+	// Dola Seed 2.1 Turbo (ep-20260811063825-brtj4): default reasoning_effort
+	//   is "high" which is too slow for the RLM loop. "low" is the sweet spot.
+	// DeepSeek v4 Flash (ep-20260811055148-jrx5v): reasoning CoT bleeds into
+	//   the output channel causing 60% failure. thinking:disabled eliminates
+	//   this, but the model also needs an explicit JSON output instruction
+	//   appended to the system message to follow json_schema reliably.
+	v_bp_model = coreGet(v_payload, "model", "")
+	v_bp_dola = _core_eq(v_bp_model, "ep-20260811063825-brtj4")
+	v_bp_dsflash = _core_eq(v_bp_model, "ep-20260811055148-jrx5v")
+	if coreTruthy(v_bp_dola) {
+		if err := coreSet(v_payload, "reasoning_effort", "low"); err != nil { return nil, err }
+	}
+	if coreTruthy(v_bp_dsflash) {
+		if err := coreSet(v_payload, "thinking", Object("type", "disabled")); err != nil { return nil, err }
+		v_bp_messages = coreGet(v_payload, "messages", MutableArray())
+		for _, v_bp_msg = range coreIter(v_bp_messages) {
+			v_bp_first_role = coreGet(v_bp_msg, "role", "")
+			if display(v_bp_first_role) == "system" {
+				v_bp_orig_content = coreGet(v_bp_msg, "content", "")
+				v_bp_new_content = display(v_bp_orig_content) + "\n\n## Output Format (CRITICAL)\nReturn ONLY a raw JSON object with exactly one field: {\"javascriptCode\": \"<your code>\"}.\nDo NOT wrap in markdown code fences. Do NOT write prose before or after.\nBegin with { and end with }."
+				if err := coreSet(v_bp_msg, "content", v_bp_new_content); err != nil { return nil, err }
+				break
+			}
+		}
 	}
 	return v_payload, nil
 }
