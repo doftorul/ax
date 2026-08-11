@@ -953,45 +953,43 @@ func _core_runtime_error(message Value) Value {
 func _core_json_parse(value Value) (Value, error) {
 	text := strings.TrimSpace(display(value))
 	fence := strings.Repeat(string(rune(96)), 3)
-	// Strip markdown code fences at the start of text
-	if strings.HasPrefix(text, fence) {
-		text = strings.ReplaceAll(text, string(rune(96)), "")
-		text = strings.TrimSpace(text)
-		for _, lang := range []string{"json", "javascript", "js", "ts", "typescript", "python", "py", "go"} {
-			if strings.HasPrefix(text, lang) {
-				text = strings.TrimSpace(text[len(lang):])
-				break
-			}
-		}
-	}
-	// Try direct parse first
+	// Stage 1: Direct parse
 	result, err := parseJSONErr(text)
 	if err == nil {
 		return result, nil
 	}
-	// Fallback: extract JSON object from mixed content (prose before/after JSON)
-	// Only look for objects ({), not arrays ([) — arrays in prose like
-	// "the answer is [0]" would be falsely extracted as JSON arrays.
-	idx := strings.Index(text, "{")
-	if idx >= 0 {
-		sub := text[idx:]
-		result, err2 := parseJSONErr(sub)
-		if err2 == nil {
-			return result, nil
-		}
-	}
-	// Fallback: prose before a fenced code block
-	fenceIdx := strings.Index(text, fence)
-	if fenceIdx >= 0 {
-		inner := text[fenceIdx+len(fence):]
+	// Stage 2: Leading code fence
+	if strings.HasPrefix(text, fence) {
+		stripped := strings.ReplaceAll(text, string(rune(96)), "")
+		stripped = strings.TrimSpace(stripped)
 		for _, lang := range []string{"json", "javascript", "js", "ts", "typescript", "python", "py", "go"} {
-			if strings.HasPrefix(strings.TrimSpace(inner), lang) {
-				inner = strings.TrimSpace(inner)
-				inner = strings.TrimSpace(inner[len(lang):])
+			if strings.HasPrefix(stripped, lang) {
+				stripped = strings.TrimSpace(stripped[len(lang):])
 				break
 			}
 		}
-		if endIdx := strings.Index(inner, fence); endIdx >= 0 {
+		result, err2 := parseJSONErr(stripped)
+		if err2 == nil {
+			return result, nil
+		}
+		if stripped != "" {
+			escaped, _ := json.Marshal(stripped)
+			return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
+		}
+	}
+	// Stage 3: Fence anywhere in text (prose before/after fence)
+	fenceIdx := strings.Index(text, fence)
+	if fenceIdx >= 0 {
+		inner := text[fenceIdx+len(fence):]
+		innerStripped := strings.TrimSpace(inner)
+		for _, lang := range []string{"json", "javascript", "js", "ts", "typescript", "python", "py", "go"} {
+			if strings.HasPrefix(innerStripped, lang) {
+				inner = strings.TrimSpace(innerStripped[len(lang):])
+				break
+			}
+		}
+		endIdx := strings.Index(inner, fence)
+		if endIdx >= 0 {
 			inner = inner[:endIdx]
 		}
 		inner = strings.TrimSpace(inner)
@@ -999,39 +997,75 @@ func _core_json_parse(value Value) (Value, error) {
 		if err2 == nil {
 			return result, nil
 		}
-		for _, prefix := range []string{"const ", "let ", "var ", "function ", "async ", "return "} {
-			if strings.HasPrefix(inner, prefix) {
-				escaped, _ := json.Marshal(inner)
-				return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
-			}
-		}
-		for _, marker := range []string{"{", "["} {
-			idx2 := strings.Index(inner, marker)
-			if idx2 >= 0 {
-				result, err3 := parseJSONErr(inner[idx2:])
-				if err3 == nil {
-					return result, nil
-				}
-			}
+		if inner != "" {
+			escaped, _ := json.Marshal(inner)
+			return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 		}
 	}
-	// Fallback: raw JavaScript code
-	for _, prefix := range []string{"const ", "let ", "var ", "function ", "async ", "return "} {
+	// Stage 4: Brace matching - find all top-level { ... } objects
+	objects := _extractJSONObjects(text)
+	for i := len(objects) - 1; i >= 0; i-- {
+		result, err2 := parseJSONErr(objects[i])
+		if err2 == nil {
+			return result, nil
+		}
+	}
+	// Stage 5: Raw JavaScript detection
+	for _, prefix := range []string{"const ", "let ", "var ", "function ", "async ", "return ", "await "} {
 		if strings.HasPrefix(text, prefix) || strings.HasPrefix(text, strings.ToUpper(prefix[:1])+prefix[1:]) {
 			escaped, _ := json.Marshal(text)
 			return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 		}
 	}
-	// Final fallback: wrap ANY remaining text as javascriptCode.
-	// BytePlus models sometimes return prose instead of code. Wrapping it
-	// ensures we always return a valid object. The JS runtime will error
-	// on non-code text, and the RLM loop will retry with the error feedback.
+	// Stage 6: Final fallback - wrap as javascriptCode
 	if len(text) > 0 {
 		escaped, _ := json.Marshal(text)
 		return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 	}
 	return parseJSONErr(text)
 }
+
+// _extractJSONObjects finds all top-level JSON objects in text using
+// string-aware brace matching. Returns objects from first to last.
+func _extractJSONObjects(text string) []string {
+	var objects []string
+	depth := 0
+	start := -1
+	inString := false
+	isEscaped := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if isEscaped {
+			isEscaped = false
+			continue
+		}
+		if c == '\\' {
+			isEscaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if c == '{' {
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		} else if c == '}' {
+			depth--
+			if depth == 0 && start >= 0 {
+				objects = append(objects, text[start:i+1])
+				start = -1
+			}
+		}
+	}
+	return objects
+}
+
 func _core_json_stringify(value Value) Value        { return stableStringify(value) }
 func _core_json_stable_stringify(value Value) Value { return stableStringify(value) }
 func _core_tool_invoke(fn Value, params Value) (Value, error) {
