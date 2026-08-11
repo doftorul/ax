@@ -969,15 +969,15 @@ func _core_json_parse(value Value) (Value, error) {
 	if err == nil {
 		return result, nil
 	}
-	// Fallback: extract JSON object/array from mixed content (prose before/after JSON)
-	for _, marker := range []string{"{", "["} {
-		idx := strings.Index(text, marker)
-		if idx >= 0 {
-			sub := text[idx:]
-			result, err2 := parseJSONErr(sub)
-			if err2 == nil {
-				return result, nil
-			}
+	// Fallback: extract JSON object from mixed content (prose before/after JSON)
+	// Only look for objects ({), not arrays ([) — arrays in prose like
+	// "the answer is [0]" would be falsely extracted as JSON arrays.
+	idx := strings.Index(text, "{")
+	if idx >= 0 {
+		sub := text[idx:]
+		result, err2 := parseJSONErr(sub)
+		if err2 == nil {
+			return result, nil
 		}
 	}
 	// Fallback: prose before a fenced code block
@@ -1021,6 +1021,14 @@ func _core_json_parse(value Value) (Value, error) {
 			escaped, _ := json.Marshal(text)
 			return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 		}
+	}
+	// Final fallback: wrap ANY remaining text as javascriptCode.
+	// BytePlus models sometimes return prose instead of code. Wrapping it
+	// ensures we always return a valid object. The JS runtime will error
+	// on non-code text, and the RLM loop will retry with the error feedback.
+	if len(text) > 0 {
+		escaped, _ := json.Marshal(text)
+		return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 	}
 	return parseJSONErr(text)
 }
@@ -12454,6 +12462,10 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	var v_bp_model Value
 	var v_bp_dola Value
 	var v_bp_dsflash Value
+	var v_bp_rf Value
+	var v_bp_rf_schema Value
+	var v_bp_rf_props Value
+	var v_bp_has_jscode Value
 	var v_bp_messages Value
 	var v_bp_msg Value
 	var v_bp_first_role Value
@@ -12473,6 +12485,10 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	_ = v_bp_model
 	_ = v_bp_dola
 	_ = v_bp_dsflash
+	_ = v_bp_rf
+	_ = v_bp_rf_schema
+	_ = v_bp_rf_props
+	_ = v_bp_has_jscode
 	_ = v_bp_messages
 	_ = v_bp_msg
 	_ = v_bp_first_role
@@ -12514,11 +12530,20 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	if coreTruthy(v_bp_dsflash) {
 		if err := coreSet(v_payload, "thinking", Object("type", "disabled")); err != nil { return nil, err }
 		v_bp_messages = coreGet(v_payload, "messages", MutableArray())
+		// Determine phase from response_format schema
+		v_bp_rf = coreGet(v_payload, "response_format", Object())
+		v_bp_rf_schema = coreGet(coreGet(v_bp_rf, "json_schema", Object()), "schema", Object())
+		v_bp_rf_props = coreGet(v_bp_rf_schema, "properties", Object())
+		v_bp_has_jscode = coreTruthy(coreGet(v_bp_rf_props, "javascriptCode", nil))
 		for _, v_bp_msg = range coreIter(v_bp_messages) {
 			v_bp_first_role = coreGet(v_bp_msg, "role", "")
 			if display(v_bp_first_role) == "system" {
 				v_bp_orig_content = coreGet(v_bp_msg, "content", "")
-				v_bp_new_content = display(v_bp_orig_content) + "\n\n## Output Format (CRITICAL)\nReturn ONLY a raw JSON object with exactly one field: {\"javascriptCode\": \"<your code>\"}.\nDo NOT wrap in markdown code fences. Do NOT write prose before or after.\nBegin with { and end with }."
+				if coreTruthy(v_bp_has_jscode) {
+					v_bp_new_content = display(v_bp_orig_content) + "\n\n## Output Format (CRITICAL)\nReturn ONLY a raw JSON object: {\"javascriptCode\": \"<your JavaScript code>\"}\nDo NOT wrap in markdown code fences. Do NOT write prose. Begin with { and end with }."
+				} else {
+					v_bp_new_content = display(v_bp_orig_content) + "\n\n## Output Format (CRITICAL)\nReturn ONLY a raw JSON object with fields: status, answer, data, evidence, actions, next.\nstatus MUST be one of: answered, needs_clarification, blocked, error.\nDo NOT wrap in markdown code fences. Do NOT write prose. Begin with { and end with }."
+				}
 				if err := coreSet(v_bp_msg, "content", v_bp_new_content); err != nil { return nil, err }
 				break
 			}
