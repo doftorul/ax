@@ -953,11 +953,73 @@ func _core_runtime_error(message Value) Value {
 func _core_json_parse(value Value) (Value, error) {
 	text := strings.TrimSpace(display(value))
 	fence := strings.Repeat(string(rune(96)), 3)
+	// Strip markdown code fences at the start of text
 	if strings.HasPrefix(text, fence) {
 		text = strings.ReplaceAll(text, string(rune(96)), "")
 		text = strings.TrimSpace(text)
-		if strings.HasPrefix(text, "json") {
-			text = strings.TrimSpace(text[4:])
+		for _, lang := range []string{"json", "javascript", "js", "ts", "typescript", "python", "py", "go"} {
+			if strings.HasPrefix(text, lang) {
+				text = strings.TrimSpace(text[len(lang):])
+				break
+			}
+		}
+	}
+	// Try direct parse first
+	result, err := parseJSONErr(text)
+	if err == nil {
+		return result, nil
+	}
+	// Fallback: extract JSON object/array from mixed content (prose before/after JSON)
+	for _, marker := range []string{"{", "["} {
+		idx := strings.Index(text, marker)
+		if idx >= 0 {
+			sub := text[idx:]
+			result, err2 := parseJSONErr(sub)
+			if err2 == nil {
+				return result, nil
+			}
+		}
+	}
+	// Fallback: prose before a fenced code block
+	fenceIdx := strings.Index(text, fence)
+	if fenceIdx >= 0 {
+		inner := text[fenceIdx+len(fence):]
+		for _, lang := range []string{"json", "javascript", "js", "ts", "typescript", "python", "py", "go"} {
+			if strings.HasPrefix(strings.TrimSpace(inner), lang) {
+				inner = strings.TrimSpace(inner)
+				inner = strings.TrimSpace(inner[len(lang):])
+				break
+			}
+		}
+		if endIdx := strings.Index(inner, fence); endIdx >= 0 {
+			inner = inner[:endIdx]
+		}
+		inner = strings.TrimSpace(inner)
+		result, err2 := parseJSONErr(inner)
+		if err2 == nil {
+			return result, nil
+		}
+		for _, prefix := range []string{"const ", "let ", "var ", "function ", "async ", "return "} {
+			if strings.HasPrefix(inner, prefix) {
+				escaped, _ := json.Marshal(inner)
+				return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
+			}
+		}
+		for _, marker := range []string{"{", "["} {
+			idx2 := strings.Index(inner, marker)
+			if idx2 >= 0 {
+				result, err3 := parseJSONErr(inner[idx2:])
+				if err3 == nil {
+					return result, nil
+				}
+			}
+		}
+	}
+	// Fallback: raw JavaScript code
+	for _, prefix := range []string{"const ", "let ", "var ", "function ", "async ", "return "} {
+		if strings.HasPrefix(text, prefix) || strings.HasPrefix(text, strings.ToUpper(prefix[:1])+prefix[1:]) {
+			escaped, _ := json.Marshal(text)
+			return parseJSONErr(fmt.Sprintf("{\"javascriptCode\": %s}", string(escaped)))
 		}
 	}
 	return parseJSONErr(text)
