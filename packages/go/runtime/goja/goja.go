@@ -214,9 +214,24 @@ func (s *Session) Execute(code string, options map[string]ax.Value) ax.Value {
 	s.restoreReservedGlobals()
 	s.installBuiltins()
 	if s.completion == nil {
-		return map[string]ax.Value{"kind": "result", "result": nil}
+		result := map[string]ax.Value{"kind": "result", "result": nil}
+		if len(s.stdout) > 0 {
+				logs := make([]ax.Value, len(s.stdout))
+			for j, line := range s.stdout {
+				logs[j] = line
+			}
+			result["logs"] = logs
+		}
+		return result
 	}
 	if safe, ok := jsonSafe(s.completion); ok {
+		if m, ok := safe.(map[string]ax.Value); ok && len(s.stdout) > 0 {
+			compLogs := make([]ax.Value, len(s.stdout))
+			for j, line := range s.stdout {
+				compLogs[j] = line
+			}
+			m["logs"] = compLogs
+		}
 		return safe
 	}
 	return runtimeError("goja actor output is not JSON-compatible", "runtime")
@@ -712,3 +727,4 @@ func jsonSafe(value ax.Value) (ax.Value, bool) {
 	}
 	return parsed, true
 }
+
