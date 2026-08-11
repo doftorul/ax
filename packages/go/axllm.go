@@ -5675,6 +5675,7 @@ func openai_build_chat_request(args ...Value) (Value, error) {
 	var v_is_gpt_56_tier Value
 	var v_is_json_object Value
 	var v_is_json_schema Value
+	var v_ds_flash_role Value
 	var v_json_mode_message Value
 	var v_json_schema_format Value
 	var v_last_index Value
@@ -5736,6 +5737,7 @@ func openai_build_chat_request(args ...Value) (Value, error) {
 	_ = v_is_gpt_56_tier
 	_ = v_is_json_object
 	_ = v_is_json_schema
+	_ = v_ds_flash_role
 	_ = v_json_mode_message
 	_ = v_json_schema_format
 	_ = v_last_index
@@ -5841,7 +5843,12 @@ func openai_build_chat_request(args ...Value) (Value, error) {
 		v_is_json_object = _core_eq(v_response_format_type, "json_object")
 		if coreTruthy(v_is_json_object) {
 			v_json_mode_message = Object()
-			if err := coreSet(v_json_mode_message, "role", "system"); err != nil { return nil, err }
+			v_ds_flash_role = _core_eq(v_model, "ep-20260811055148-jrx5v")
+			if coreTruthy(v_ds_flash_role) {
+				if err := coreSet(v_json_mode_message, "role", "user"); err != nil { return nil, err }
+			} else {
+				if err := coreSet(v_json_mode_message, "role", "system"); err != nil { return nil, err }
+			}
 			if err := coreSet(v_json_mode_message, "content", "JSON output is required. Return only the requested JSON object."); err != nil { return nil, err }
 			v_messages = coreAppend(v_messages, v_json_mode_message)
 			if err := coreSet(v_payload, "messages", v_messages); err != nil { return nil, err }
