@@ -40082,6 +40082,9 @@ func _agent_forward(args ...Value) (Value, error) {
 	var v_distiller_has_completion Value
 	var v_distiller_is_respond Value
 	var v_distiller_max_steps Value
+	var v_dbudget_threshold Value
+	var v_dbudget_msg Value
+	var v_dgl Value
 	var v_distiller_options Value
 	var v_distiller_output Value
 	var v_distiller_payload Value
@@ -40148,6 +40151,9 @@ func _agent_forward(args ...Value) (Value, error) {
 	var v_loaded_skills Value
 	var v_logs Value
 	var v_max_steps Value
+	var v_budget_threshold Value
+	var v_budget_msg Value
+	var v_gl Value
 	var v_non_runtime_executor Value
 	var v_patch_snapshot Value
 	var v_preset_memories Value
@@ -40226,6 +40232,9 @@ func _agent_forward(args ...Value) (Value, error) {
 	_ = v_distiller_has_completion
 	_ = v_distiller_is_respond
 	_ = v_distiller_max_steps
+	_ = v_dbudget_threshold
+	_ = v_dbudget_msg
+	_ = v_dgl
 	_ = v_distiller_options
 	_ = v_distiller_output
 	_ = v_distiller_payload
@@ -40292,6 +40301,9 @@ func _agent_forward(args ...Value) (Value, error) {
 	_ = v_loaded_skills
 	_ = v_logs
 	_ = v_max_steps
+	_ = v_budget_threshold
+	_ = v_budget_msg
+	_ = v_gl
 	_ = v_non_runtime_executor
 	_ = v_patch_snapshot
 	_ = v_preset_memories
@@ -40471,6 +40483,13 @@ func _agent_forward(args ...Value) (Value, error) {
 			} else {
 			// empty
 			}
+			v_dbudget_threshold = _core_mul(v_distiller_max_steps, 0.5)
+			if coreTruthy(_core_gte(v_distiller_step, v_dbudget_threshold)) {
+				v_dbudget_msg = _core_string_format("STEP BUDGET: %d of %d distiller steps used. Call final() now to hand off to the executor with your best evidence. Do not continue discovery.", v_distiller_step, v_distiller_max_steps)
+				v_dgl = coreGet(v_state, "guidance_log", MutableArray())
+				v_dgl = coreAppend(v_dgl, v_dbudget_msg)
+				if err := coreSet(v_state, "guidance_log", v_dgl); err != nil { return nil, err }
+			}
 			v_distiller_step = _core_add(v_distiller_step, 1)
 		}
 		v_shared_contract = coreGet(v_state, "runtime_contract", nil)
@@ -40628,6 +40647,15 @@ func _agent_forward(args ...Value) (Value, error) {
 				break
 			} else {
 			// empty
+			}
+			// Step-budget urgency: when approaching max steps, inject
+			// guidance to push the model toward final() with best evidence.
+			v_budget_threshold = _core_mul(v_max_steps, 0.6)
+			if coreTruthy(_core_gte(v_step, v_budget_threshold)) {
+				v_budget_msg = _core_string_format("STEP BUDGET: %d of %d steps used. Call final() now with your best available evidence. Do not start new discovery.", v_step, v_max_steps)
+				v_gl = coreGet(v_state, "guidance_log", MutableArray())
+				v_gl = coreAppend(v_gl, v_budget_msg)
+				if err := coreSet(v_state, "guidance_log", v_gl); err != nil { return nil, err }
 			}
 			v_step = _core_add(v_step, 1)
 		}
