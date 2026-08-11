@@ -12462,6 +12462,7 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	var v_bp_model Value
 	var v_bp_dola Value
 	var v_bp_dsflash Value
+	var v_bp_glm52 Value
 	var v_bp_rf Value
 	var v_bp_rf_schema Value
 	var v_bp_rf_props Value
@@ -12485,6 +12486,7 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	_ = v_bp_model
 	_ = v_bp_dola
 	_ = v_bp_dsflash
+	_ = v_bp_glm52
 	_ = v_bp_rf
 	_ = v_bp_rf_schema
 	_ = v_bp_rf_props
@@ -12524,6 +12526,7 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 	v_bp_model = coreGet(v_payload, "model", "")
 	v_bp_dola = _core_eq(v_bp_model, "ep-20260811063825-brtj4")
 	v_bp_dsflash = _core_eq(v_bp_model, "ep-20260811055148-jrx5v")
+	v_bp_glm52 = _core_eq(v_bp_model, "ep-20260712032712-79zg9")
 	if coreTruthy(v_bp_dola) {
 		if err := coreSet(v_payload, "reasoning_effort", "low"); err != nil { return nil, err }
 	}
@@ -12548,6 +12551,9 @@ func _provider_apply_openai_compatible_profile_quirks(args ...Value) (Value, err
 				break
 			}
 		}
+	}
+	if coreTruthy(v_bp_glm52) {
+		if err := coreSet(v_payload, "thinking", Object("type", "disabled")); err != nil { return nil, err }
 	}
 	return v_payload, nil
 }
