@@ -168,6 +168,8 @@ func (s *Session) Execute(code string, options map[string]ax.Value) ax.Value {
 		return runtimeError("session closed", "session_closed")
 	}
 	s.completion = nil
+	s.stdout = s.stdout[:0]
+	s.stderr = s.stderr[:0]
 	s.installBuiltins()
 	timeoutMs := intOption(valueFromMap(options, "timeoutMs"), intOption(valueFromMap(s.runtimePolicy, "timeoutMs"), 5000))
 	var timer *time.Timer
